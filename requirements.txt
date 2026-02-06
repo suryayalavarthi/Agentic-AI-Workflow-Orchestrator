@@ -1,0 +1,26 @@
+# Core orchestration
+langgraph
+langchain-core
+langchain-anthropic
+langchain-community
+langchain-mcp-adapters
+
+# MCP & tools
+mcp
+fastmcp
+
+# RAG & embeddings
+chromadb
+sentence-transformers
+
+# Web & search
+duckduckgo-search
+requests
+beautifulsoup4
+
+# Config & types
+python-dotenv
+pydantic
+
+# UI
+streamlit
