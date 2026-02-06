@@ -38,5 +38,5 @@
 - **Audit trail**: Persistent graph state via LangGraph Checkpointers allows for turn-by-turn debugging.
 
 ## Update & Maintenance
-- **Owner**: Agentic Workflow Team
+- **Owner**: Surya Yalavarthi
 - **Monitoring signals**: Loop counts, tool-failure rates, and RAG retrieval hitting scores.

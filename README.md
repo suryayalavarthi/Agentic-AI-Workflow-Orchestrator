@@ -147,4 +147,4 @@ python -m src.main
 ```
 
 ---
-*Built with precision by the Agentic Workflow Team.*
+*Built with precision by Surya Yalavarthi.*
