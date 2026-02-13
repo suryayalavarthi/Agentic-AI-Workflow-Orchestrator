@@ -8,6 +8,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from ..config import get_settings, llm_retry
 from ..state import AgentState, prune_messages
 from ..tools.mcp_tools import get_research_tools
 from ..tools.memory import get_vector_db
@@ -57,7 +58,12 @@ class AnalystAssessment(BaseModel):
 
 
 def _build_llm() -> ChatAnthropic:
-    return ChatAnthropic(model="claude-3-haiku-20240307", temperature=0)
+    cfg = get_settings()
+    return ChatAnthropic(
+        model=cfg.default_model,
+        temperature=cfg.default_temperature,
+        api_key=cfg.anthropic_api_key,
+    )
 
 
 async def analyst_node(state: AgentState) -> AgentState:
@@ -65,66 +71,72 @@ async def analyst_node(state: AgentState) -> AgentState:
         tool_aware = _build_llm().bind_tools(tools).with_structured_output(
             AnalystAssessment
         )
-    system_parts = [ANALYST_SYSTEM]
-    summary = state.get("summary", "").strip()
-    if summary:
-        system_parts.append(f"Running summary:\n{summary}")
-    if state.get("research_results"):
-        results_text = "\n---\n".join(
-            str(result) for result in state["research_results"]
-        )
-        system_parts.append(f"Research results:\n{results_text}")
-    last_user_message = next(
-        (
-            message.content
-            for message in reversed(state.get("messages", []))
-            if isinstance(message, HumanMessage)
-        ),
-        "",
-    )
-    if last_user_message:
-        vector_hits = get_vector_db().retrieve_knowledge_with_sources(
-            last_user_message, k=4
-        )
-        if vector_hits:
-            vector_lines = [
-                f"[{hit['source_url']}] {hit['text']}"
-                for hit in vector_hits
-                if hit.get("text")
-            ]
-            vector_text = "\n---\n".join(vector_lines)
-            system_parts.append(f"Vector DB facts:\n{vector_text}")
-    system_message = SystemMessage(content="\n\n".join(system_parts))
-    prior_messages = [
-        message
-        for message in prune_messages(state.get("messages", []))
-        if not isinstance(message, SystemMessage)
-    ]
-    messages: List[BaseMessage] = [system_message] + prior_messages
-    assessment = await tool_aware.ainvoke(messages)
 
-    payload = assessment.model_dump()
-    logger.info("Analyst assessment: %s", payload)
+        system_parts = [ANALYST_SYSTEM]
+        summary = state.get("summary", "").strip()
+        if summary:
+            system_parts.append(f"Running summary:\n{summary}")
+        if state.get("research_results"):
+            results_text = "\n---\n".join(
+                str(result) for result in state["research_results"]
+            )
+            system_parts.append(f"Research results:\n{results_text}")
+        last_user_message = next(
+            (
+                message.content
+                for message in reversed(state.get("messages", []))
+                if isinstance(message, HumanMessage)
+            ),
+            "",
+        )
+        if last_user_message:
+            vector_hits = get_vector_db().retrieve_knowledge_with_sources(
+                last_user_message, k=4
+            )
+            if vector_hits:
+                vector_lines = [
+                    f"[{hit['source_url']}] {hit['text']}"
+                    for hit in vector_hits
+                    if hit.get("text")
+                ]
+                vector_text = "\n---\n".join(vector_lines)
+                system_parts.append(f"Vector DB facts:\n{vector_text}")
+        system_message = SystemMessage(content="\n\n".join(system_parts))
+        prior_messages = [
+            message
+            for message in prune_messages(state.get("messages", []))
+            if not isinstance(message, SystemMessage)
+        ]
+        messages: List[BaseMessage] = [system_message] + prior_messages
 
-    if state.get("loop_count", 0) >= 3 and assessment.needs_more_research:
-        synthesis_prompt = "\n\n".join(
-            system_parts
-            + [
-                "Provide a final synthesis using only the available information. "
-                "Do not ask for more research.",
-            ]
-        )
-        synthesis_message = SystemMessage(content=synthesis_prompt)
-        synthesis_messages: List[BaseMessage] = [synthesis_message] + prior_messages
-        synthesis_response = await tool_aware.ainvoke(synthesis_messages)
-        assessment = AnalystAssessment(
-            needs_more_research=False,
-            gaps=assessment.gaps,
-            re_research_instructions="",
-            synthesis=str(synthesis_response.synthesis),
-        )
+        @llm_retry()
+        async def _ainvoke(msgs):
+            return await tool_aware.ainvoke(msgs)
+
+        assessment = await _ainvoke(messages)
+
         payload = assessment.model_dump()
-        logger.info("Analyst forced final synthesis after loop limit")
+        logger.info("Analyst assessment: %s", payload)
+
+        if state.get("loop_count", 0) >= 3 and assessment.needs_more_research:
+            synthesis_prompt = "\n\n".join(
+                system_parts
+                + [
+                    "Provide a final synthesis using only the available information. "
+                    "Do not ask for more research.",
+                ]
+            )
+            synthesis_message = SystemMessage(content=synthesis_prompt)
+            synthesis_messages: List[BaseMessage] = [synthesis_message] + prior_messages
+            synthesis_response = await _ainvoke(synthesis_messages)
+            assessment = AnalystAssessment(
+                needs_more_research=False,
+                gaps=assessment.gaps,
+                re_research_instructions="",
+                synthesis=str(synthesis_response.synthesis),
+            )
+            payload = assessment.model_dump()
+            logger.info("Analyst forced final synthesis after loop limit")
 
     content = json.dumps(payload)
     response_messages = [AIMessage(content=content)]

@@ -1,22 +1,31 @@
 from __future__ import annotations
 
-from dotenv import load_dotenv
-
-load_dotenv()
-_has_api_key = bool(
-    __import__("os").environ.get("ANTHROPIC_API_KEY")
-    or __import__("os").environ.get("OPENAI_API_KEY")
-)
-print(f"DEBUG: API Key found: {_has_api_key}")
-
 import asyncio
 import json
-from typing import Dict, List, Optional, Tuple
+import logging
+import time
+from typing import Dict, List
 
 import streamlit as st
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import HumanMessage
 
+from src.config import get_settings
 from src.graph import compile_graph
+
+logger = logging.getLogger(__name__)
+
+_cfg = get_settings()
+_has_api_key = bool(_cfg.anthropic_api_key)
+
+_NODE_ICONS = {
+    "supervisor": "routing",
+    "researcher": "searching",
+    "analyst": "analyzing",
+    "summarizer": "summarizing",
+    "draft_outline": "outlining",
+    "final_report": "writing",
+}
+
 
 def _init_session() -> None:
     if "graph" not in st.session_state:
@@ -38,8 +47,10 @@ def _init_session() -> None:
     if "final_report" not in st.session_state:
         st.session_state.final_report = ""
 
+
 def _append_chat(role: str, content: str) -> None:
     st.session_state.chat_history.append({"role": role, "content": content})
+
 
 def _is_internal_message(content: str) -> bool:
     content = content.strip()
@@ -54,17 +65,31 @@ def _is_internal_message(content: str) -> bool:
             return True
     return False
 
-def _render_agent_log(placeholder, entries: List[Dict[str, str]]) -> None:
+
+def _render_agent_log(placeholder, entries: List[Dict]) -> None:
     if not entries:
         placeholder.markdown("_No activity yet._")
         return
     with placeholder.container():
-        for entry in entries[-10:]:
+        current_loop = None
+        for entry in entries[-15:]:
+            loop = entry.get("loop_count", 0)
+            if loop != current_loop:
+                current_loop = loop
+                st.markdown(f"**--- Loop {loop} ---**")
+            icon = _NODE_ICONS.get(entry["node"], "processing")
             status_state = (
                 "complete" if entry.get("status") == "complete" else "running"
             )
-            with st.status(entry["node"], state=status_state, expanded=False):
+            with st.status(
+                f"{entry['node']} ({icon})", state=status_state, expanded=False
+            ):
                 st.caption(entry["content"])
+                ts = entry.get("timestamp")
+                if ts:
+                    st.caption(
+                        f"at {time.strftime('%H:%M:%S', time.localtime(ts))}"
+                    )
 
 
 async def _run_graph_async(
@@ -80,41 +105,60 @@ async def _run_graph_async(
     if hasattr(st, "status"):
         status = status_placeholder.status("Running graph...", expanded=True)
 
-    async for event in graph.astream(state, config=config):
-        for node_name, output in event.items():
-            if isinstance(output, tuple):
-                if not output:
+    try:
+        async for event in graph.astream(state, config=config):
+            for node_name, output in event.items():
+                # Mirror tuple handling from the CLI runner.
+                if isinstance(output, tuple):
+                    try:
+                        if not output:
+                            continue
+                        output = output[0]
+                    except (IndexError, TypeError):
+                        continue
+                if not isinstance(output, dict):
                     continue
-                output = output[0]
-            if not isinstance(output, dict):
-                continue
 
-            latest_state.update(output)
-            
-            log_entry = f"{node_name} completed execution."
-            if "reasoning" in output:
-                log_entry = f"{node_name}: {output['reasoning']}"
-            print(f"[node] {node_name}")
+                latest_state.update(output)
 
-            st.session_state.agent_log.append(
-                {"node": node_name, "content": log_entry, "status": "complete"}
-            )
-            _render_agent_log(log_placeholder, st.session_state.agent_log)
-            if status is not None:
-                status.update(label=f"Running: {node_name}")
-            
-            messages = output.get("messages", [])
-            if messages:
-                last_msg = messages[-1]
-                # Assistant messages are not pushed into the main chat; only Final
-                # Report is rendered separately for a cleaner UX.
-            
-            if node_name == "final_report":
-                st.session_state.final_report = str(last_msg.content)
+                log_entry = f"{node_name} completed execution."
+                if "reasoning" in output:
+                    log_entry = f"{node_name}: {output['reasoning']}"
+                logger.info("Node: %s", node_name)
 
-    if status is not None:
-        status.update(label="Completed", state="complete")
+                st.session_state.agent_log.append({
+                    "node": node_name,
+                    "content": log_entry,
+                    "status": "complete",
+                    "timestamp": time.time(),
+                    "loop_count": output.get("loop_count", 0),
+                })
+                _render_agent_log(log_placeholder, st.session_state.agent_log)
+                if status is not None:
+                    status.update(label=f"Running: {node_name}")
+
+                messages = output.get("messages", [])
+                if messages:
+                    last_msg = messages[-1]
+                else:
+                    last_msg = None
+
+                if node_name == "final_report" and last_msg is not None:
+                    st.session_state.final_report = str(last_msg.content)
+    except Exception as exc:  # noqa: BLE001
+        # Surface errors both in logs and in the returned state so the UI
+        # can display a clear message instead of silently falling back.
+        logger.exception("Graph execution failed in Streamlit: %s", exc)
+        latest_state["error"] = {
+            "type": "graph_failed",
+            "detail": str(exc),
+        }
+    finally:
+        if status is not None:
+            status.update(label="Completed", state="complete")
+
     return latest_state
+
 
 def _run_graph(
     graph,
@@ -142,16 +186,36 @@ def _run_graph(
         finally:
             loop.close()
 
+
 def main() -> None:
     st.set_page_config(page_title="Agentic Orchestrator", layout="wide")
     _init_session()
 
-    st.title("🤖 Agentic Orchestrator Dashboard")
+    st.title("Agentic Orchestrator Dashboard")
     if not _has_api_key:
         st.warning("No API Key detected in .env file. Please check your configuration.")
 
+    cfg = get_settings()
+
     with st.sidebar:
-        st.header("🕵️ Agent Thought Process")
+        # --- Settings Panel ---
+        with st.expander("Settings", expanded=False):
+            model_choice = st.selectbox(
+                "LLM Model",
+                ["claude-3-haiku-20240307", "claude-3-5-sonnet-20241022"],
+                index=0,
+            )
+            max_loops = st.slider(
+                "Max Research Loops", 1, 20, cfg.max_loop_count
+            )
+            temperature = st.slider(
+                "Temperature", 0.0, 1.0, cfg.default_temperature, 0.1
+            )
+            st.session_state.model_override = model_choice
+            st.session_state.max_loops_override = max_loops
+            st.session_state.temperature_override = temperature
+
+        st.header("Agent Thought Process")
         if st.button("Clear Logs"):
             st.session_state.agent_log = []
         log_placeholder = st.empty()
@@ -163,8 +227,12 @@ def main() -> None:
         if entry["role"] == "user":
             with st.chat_message("user"):
                 st.markdown(entry["content"])
-
-    if not st.session_state.final_report:
+    # Only fall back to showing the last message as a \"report\" when there
+    # is no real final_report and no explicit error from the graph.
+    if (
+        not st.session_state.final_report
+        and not st.session_state.graph_state.get("error")
+    ):
         last_message = (
             st.session_state.graph_state.get("messages", [])[-1]
             if st.session_state.graph_state.get("messages")
@@ -176,17 +244,30 @@ def main() -> None:
     if st.session_state.final_report:
         st.divider()
         with st.container(border=True):
-            st.subheader("📝 Final Research Synthesis")
+            st.subheader("Final Research Synthesis")
             exec_tab, deep_tab, sources_tab = st.tabs(
                 ["Executive Summary", "Deep Dive", "Sources"]
             )
             with exec_tab:
-                st.markdown(st.session_state.final_report.split("##", maxsplit=1)[0])
+                # For the Executive Summary tab, hide the top-level markdown
+                # heading (\"# Executive Summary\") to avoid duplicating the
+                # surrounding \"Final Research Synthesis\" title.
+                report = st.session_state.final_report
+                lines = report.splitlines()
+                if lines and lines[0].lstrip().startswith("#"):
+                    exec_md = "\n".join(lines[1:])
+                else:
+                    exec_md = report.split("##", maxsplit=1)[0]
+                st.markdown(exec_md)
             with deep_tab:
                 st.markdown(st.session_state.final_report)
             with sources_tab:
-                with st.expander("View Raw Data", expanded=False):
-                    st.markdown(st.session_state.final_report)
+                report = st.session_state.final_report
+                if "## Sources & References" in report:
+                    sources_section = report.split("## Sources & References", 1)[1]
+                    st.markdown("## Sources & References" + sources_section)
+                else:
+                    st.info("No source references found in this report.")
 
     # Input handling
     user_input = st.chat_input("Ask the orchestrator about scaling, security, or architecture...")
@@ -195,19 +276,19 @@ def main() -> None:
         graph = st.session_state.graph
         config = {
             "configurable": {"thread_id": st.session_state.thread_id},
-            "recursion_limit": 25,
+            "recursion_limit": cfg.recursion_limit,
         }
-        
+
         current_state = dict(st.session_state.graph_state)
         # Reset per-turn state
         current_state["loop_count"] = 0
         current_state["research_results"] = []
         current_state["needs_more_research"] = True
-        
+
         # Clear messages to start fresh context for the new turn.
         # Historical context is preserved in the 'summary' field.
         current_state["messages"] = [HumanMessage(content=user_input)]
-        
+
         st.session_state.graph_state = current_state
 
         try:
@@ -220,8 +301,15 @@ def main() -> None:
                     status_placeholder,
                 )
         except Exception as exc:  # noqa: BLE001
+            logger.exception("Graph execution failed in Streamlit: %s", exc)
+            st.session_state.graph_state = dict(st.session_state.graph_state)
+            st.session_state.graph_state["error"] = {
+                "type": "graph_failed",
+                "detail": str(exc),
+            }
             st.error(f"Graph execution failed: {exc}")
         st.rerun()
+
 
 if __name__ == "__main__":
     main()

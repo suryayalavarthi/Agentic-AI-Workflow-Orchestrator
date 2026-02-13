@@ -5,7 +5,7 @@ from typing import AsyncIterator, List
 
 from langchain_core.tools import BaseTool
 
-from .mcp_tools import get_all_tools
+from .registry import get_all_tools
 
 
 @asynccontextmanager

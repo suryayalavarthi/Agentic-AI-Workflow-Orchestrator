@@ -4,7 +4,7 @@ from typing import List, TypedDict
 
 from langchain_core.messages import BaseMessage, SystemMessage
 
-MAX_CONTEXT_MESSAGES = 6
+from .config import get_settings
 
 
 class AgentState(TypedDict):
@@ -17,8 +17,10 @@ class AgentState(TypedDict):
 
 def prune_messages(
     messages: List[BaseMessage],
-    max_messages: int = MAX_CONTEXT_MESSAGES,
+    max_messages: int | None = None,
 ) -> List[BaseMessage]:
+    if max_messages is None:
+        max_messages = get_settings().max_context_messages
     if len(messages) <= max_messages:
         return messages
     return messages[-max_messages:]

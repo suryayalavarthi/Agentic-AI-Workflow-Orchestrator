@@ -7,6 +7,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
 
+from ..config import get_settings, llm_retry
 from ..state import AgentState, prune_messages
 from ..tools.mcp_tools import get_research_tools
 from ..tools.memory import get_vector_db
@@ -22,8 +23,12 @@ get deep details.
 """
 
 def _build_llm() -> ChatAnthropic:
-    # Ensuring we use the 2026 stable model string
-    return ChatAnthropic(model="claude-3-haiku-20240307", temperature=0)
+    cfg = get_settings()
+    return ChatAnthropic(
+        model=cfg.default_model,
+        temperature=cfg.default_temperature,
+        api_key=cfg.anthropic_api_key,
+    )
 
 async def _run_tool_calls(
     response: BaseMessage,
@@ -107,12 +112,16 @@ async def researcher_node(state: AgentState) -> AgentState:
         ]
         messages: List[BaseMessage] = [system_message] + prior_messages
 
-        response = await tool_aware.ainvoke(messages)
+        @llm_retry()
+        async def _ainvoke(msgs):
+            return await tool_aware.ainvoke(msgs)
+
+        response = await _ainvoke(messages)
         tool_messages, tool_args = await _run_tool_calls(response, tools)
 
         final_response = response
         if tool_messages:
-            final_response = await tool_aware.ainvoke(
+            final_response = await _ainvoke(
                 messages + [response] + tool_messages
             )
 

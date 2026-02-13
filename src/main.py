@@ -8,20 +8,21 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from typing import Dict, Optional
 
-from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
 
+from .config import get_settings
 from .graph import compile_graph
 from .state import AgentState
 
+logger = logging.getLogger(__name__)
+
 
 def _configure_logging() -> None:
-    level = os.environ.get("LOG_LEVEL", "INFO").upper()
+    cfg = get_settings()
     logging.basicConfig(
-        level=level,
+        level=cfg.log_level.upper(),
         format="%(asctime)s %(levelname)s %(name)s - %(message)s",
     )
 
@@ -52,7 +53,7 @@ async def _stream_with_state(
             if not messages:
                 continue
             last_message = messages[-1]
-            print(f"\n{node_name}> {last_message.content}")
+            logger.info("%s> %s", node_name, last_message.content)
     return latest_state
 
 def _extract_synthesis(state: AgentState) -> Optional[str]:
@@ -80,13 +81,12 @@ def _extract_synthesis(state: AgentState) -> Optional[str]:
 
 # CHANGED: Main loop now wrapped in an async function
 async def run_cli() -> None:
-    load_dotenv()
+    cfg = get_settings()
     _configure_logging()
     graph = compile_graph()
-    thread_id = os.environ.get("THREAD_ID", "default")
     config = {
-        "configurable": {"thread_id": thread_id},
-        "recursion_limit": 25,
+        "configurable": {"thread_id": cfg.thread_id},
+        "recursion_limit": cfg.recursion_limit,
     }
 
     print("Agentic Orchestrator CLI. Type 'exit' to quit.")

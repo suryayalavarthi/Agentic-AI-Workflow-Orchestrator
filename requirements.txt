@@ -21,6 +21,14 @@ beautifulsoup4
 # Config & types
 python-dotenv
 pydantic
+pydantic-settings
+
+# Retry
+tenacity
 
 # UI
 streamlit
+
+# Testing
+pytest
+pytest-asyncio

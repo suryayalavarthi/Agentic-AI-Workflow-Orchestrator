@@ -5,9 +5,11 @@ from typing import List
 
 import requests
 from bs4 import BeautifulSoup
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 from fastmcp import FastMCP
 from langchain_community.tools import DuckDuckGoSearchRun
 
+from .config import get_settings
 from .tools.memory import get_vector_db
 
 logger = logging.getLogger(__name__)
@@ -21,11 +23,22 @@ def duckduckgo_search(query: str, max_results: int = 5) -> str:
     return str(search.invoke(query))
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(min=1, max=10),
+    retry=retry_if_exception_type(requests.exceptions.RequestException),
+    reraise=True,
+)
+def _fetch_url(url: str, timeout: int) -> requests.Response:
+    response = requests.get(url, timeout=timeout)
+    response.raise_for_status()
+    return response
+
+
 @mcp.tool()
 def web_scraper(url: str) -> str:
     """Fetch a URL and return the first 5000 characters of page text."""
-    response = requests.get(url, timeout=15)
-    response.raise_for_status()
+    response = _fetch_url(url, timeout=get_settings().web_scraper_timeout)
     soup = BeautifulSoup(response.text, "html.parser")
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()

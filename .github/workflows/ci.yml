@@ -23,6 +23,11 @@ jobs:
         python -m pip install --upgrade pip
         pip install ruff
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-        
+
     - name: Run Ruff Linting
       run: ruff check .
+
+    - name: Run Unit Tests
+      run: pytest tests/ -m "not integration" -v --tb=short
+      env:
+        ANTHROPIC_API_KEY: "test-key-ci"

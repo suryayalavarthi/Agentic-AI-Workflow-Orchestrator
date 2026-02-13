@@ -11,7 +11,7 @@ A stateful, multi-agent research system designed to automate complex information
 
 ---
 
-## � High-Level Value Proposition
+## ✨ High-Level Value Proposition
 
 ### 🛡️ Factual Grounding & Hallucination Resistance
 Unlike standard LLM chats, this orchestrator never "guesses." If the **Analyst** identifies a gap in the gathered data, it forces the **Researcher** back into the field. All synthesis is cross-referenced against raw tool outputs and vector DB sources.
@@ -92,16 +92,21 @@ The **Summarizer Node** monitors token pressure. When the message history exceed
 ## 📂 Project Structure
 
 ```text
-src/
-├── agents/             # Specialist logic (Supervisor, Researcher, Analyst)
-├── graph/
-│   ├── workflow.py     # Graph definition & conditional routing
-│   └── nodes.py        # Shared node implementations (Summarizer, Final Report)
-├── mcp_logic/          # MCP Client & Server implementations
-├── tools/              # RAG & specialized toolsets (ChromaDB, Search)
-├── gui.py              # Streamlit dashboard
-├── main.py             # CLI entry point
-└── state.py            # TypedDict state definitions
+agentic-orchestrator/
+├── src/
+│   ├── agents/           # Supervisor, Researcher, Analyst
+│   ├── graph/            # LangGraph workflow + nodes (summarizer, final_report)
+│   ├── tools/            # MCP tool loading, ChromaDB memory, registries
+│   ├── mcp_logic/        # MCP client utilities
+│   ├── gui.py            # Streamlit dashboard (recommended UI)
+│   ├── main.py           # CLI entry point
+│   ├── server.py         # FastMCP server exposing search/scraper/memory
+│   └── state.py          # AgentState definition and pruning utilities
+├── tests/                # Unit tests for agents, nodes, tools, workflow, config
+├── docs/                 # Additional documentation / templates
+├── requirements.txt      # Python dependencies
+├── .env.example          # Sample environment configuration
+└── .gitignore            # Git ignore rules (venv, data, cache, etc.)
 ```
 
 ---
@@ -130,21 +135,79 @@ pip install -r requirements.txt
 ### 3️⃣ Configuration
 Create a `.env` file in the root directory:
 ```env
-ANTHROPIC_API_KEY=your_key_here
-LANGCHAIN_TRACING_V2=true
-LANGCHAIN_API_KEY=your_langsmith_key
+ANTHROPIC_API_KEY=your_anthropic_key
+GOOGLE_API_KEY=your_google_key           # optional
+SQLITE_DB_PATH=./data/app.db             # optional for future features
+LANGSMITH_API_KEY=your_langsmith_key     # optional tracing
+LANGSMITH_PROJECT=agentic-orchestrator
+LANGSMITH_TRACING=true
 ```
 
-### 4️⃣ Execution
-**Launch the Dashboard (Recommended):**
+### 4️⃣ Run the MCP server
+
+The Researcher and Analyst talk to tools via a local FastMCP server. Start it first:
+
 ```bash
-streamlit run src/gui.py
+python -m src.server
 ```
 
-**Launch the CLI:**
+This process should stay running in its own terminal.
+
+### 5️⃣ Execution
+
+**Launch the Streamlit Dashboard (recommended):**
+
+```bash
+# From the project root, with your venv active
+export PYTHONPATH=\"$PWD\"
+python -m streamlit run src/gui.py
+```
+
+**Launch the CLI (optional):**
+
 ```bash
 python -m src.main
 ```
+
+In the Streamlit UI, use the **Settings** sidebar to choose the LLM model, max research loops, and temperature. The main panel shows:
+
+- **Final Research Synthesis** with Executive Summary, Comparison Matrix, and Detailed Analysis.
+- A **Research Results** section with per-source snippets.
+- A **Sources** tab with clickable references discovered via ChromaDB.
+
+The **Agent Thought Process** sidebar visualizes each loop through `supervisor → researcher → analyst → final_report`.
+
+---
+
+## 🧑‍💻 Development & Testing
+
+From the project root, with your virtual environment active:
+
+```bash
+# Run the full test suite
+pytest tests/ -v
+
+# Lint the codebase
+ruff check src tests
+```
+
+For end-to-end manual testing:
+
+1. Start the MCP server: `python -m src.server`.  
+2. In another terminal, run: `export PYTHONPATH=\"$PWD\" && python -m streamlit run src/gui.py`.  
+3. Ask a question in the chat and verify that the Agent Thought Process shows loops and the Final Research Synthesis populates with a comparison matrix and sources.
+
+---
+
+## 📜 License & Contributions
+
+This project is intended to be open-sourced on GitHub. Add an appropriate `LICENSE` file (for example, MIT or Apache-2.0) at the repository root and reference it here once chosen.
+
+Contributions are welcome via pull requests. A minimal `CONTRIBUTING.md` can document:
+
+- How to set up the environment.  
+- How to run tests and linting.  
+- Any project-specific code style or review expectations.
 
 ---
 *Built with precision by Surya Yalavarthi.*

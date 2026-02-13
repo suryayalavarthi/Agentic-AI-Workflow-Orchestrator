@@ -10,16 +10,17 @@ from langgraph.graph import END, StateGraph
 from ..agents.analyst import analyst_node
 from ..agents.researcher import researcher_node
 from ..agents.supervisor import supervisor_node
+from ..config import get_settings
 from ..state import AgentState
 from .nodes import draft_outline_node, final_report_node, summarizer_node
 
 logger = logging.getLogger(__name__)
 
 def _needs_summarization(state: AgentState) -> bool:
-    return len(state.get("messages", [])) > 6
+    return len(state.get("messages", [])) > get_settings().max_context_messages
 
 def _route_after_supervisor(state: AgentState) -> str:
-    if state.get("loop_count", 0) > 15:  # Increased limit, handled by recursion_limit too
+    if state.get("loop_count", 0) > get_settings().max_loop_count:
         logger.warning("Max loops reached after supervisor, forcing final report")
         return "final_report"
     if _needs_summarization(state):
@@ -50,7 +51,7 @@ def _route_after_supervisor(state: AgentState) -> str:
     return next_agent
 
 def _route_after_analyst(state: AgentState) -> str:
-    if state.get("loop_count", 0) > 15:
+    if state.get("loop_count", 0) > get_settings().max_loop_count:
         logger.warning("Max loops reached after analyst, forcing final report")
         return "final_report"
     if state.get("needs_more_research"):

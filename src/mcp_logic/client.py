@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import List, Optional
+
+from ..config import get_settings
 
 logger = logging.getLogger(__name__)
 
 
 class MCPClient:
     def __init__(self) -> None:
-        self._command = os.environ.get("MCP_FETCH_COMMAND")
-        args = os.environ.get("MCP_FETCH_ARGS", "")
+        cfg = get_settings()
+        self._command = cfg.mcp_fetch_command
+        args = cfg.mcp_fetch_args
         self._args = [arg for arg in args.split(" ") if arg]
 
     async def fetch(self, url: str) -> Optional[str]:

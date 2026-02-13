@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 from typing import Dict, List, Optional
 
@@ -9,17 +8,17 @@ import chromadb
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 from langchain_core.tools import tool
 
+from ..config import get_settings
+
 logger = logging.getLogger(__name__)
 
 
 class VectorDB:
     def __init__(self, path: Optional[str] = None) -> None:
-        db_path = path or os.environ.get("CHROMA_PATH", "./data/chroma")
+        cfg = get_settings()
+        db_path = path or cfg.chroma_path
         self._client = chromadb.PersistentClient(path=db_path)
-        model_name = os.environ.get(
-            "CHROMA_EMBEDDING_MODEL",
-            "sentence-transformers/all-MiniLM-L6-v2",
-        )
+        model_name = cfg.chroma_embedding_model
         embedding_function = SentenceTransformerEmbeddingFunction(model_name=model_name)
         self._collection = self._client.get_or_create_collection(
             name="research",

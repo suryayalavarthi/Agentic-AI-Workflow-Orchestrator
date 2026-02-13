@@ -8,6 +8,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from ..config import get_settings, llm_retry
 from ..state import AgentState, prune_messages
 
 logger = logging.getLogger(__name__)
@@ -32,7 +33,12 @@ class SupervisorDecision(BaseModel):
 
 
 def _build_llm() -> ChatAnthropic:
-    return ChatAnthropic(model="claude-3-haiku-20240307", temperature=0)
+    cfg = get_settings()
+    return ChatAnthropic(
+        model=cfg.default_model,
+        temperature=cfg.default_temperature,
+        api_key=cfg.anthropic_api_key,
+    )
 
 
 def supervisor_node(state: AgentState) -> AgentState:
@@ -48,7 +54,12 @@ def supervisor_node(state: AgentState) -> AgentState:
         if not isinstance(message, SystemMessage)
     ]
     messages: List[BaseMessage] = [system_message] + prior_messages
-    decision = llm.invoke(messages)
+
+    @llm_retry()
+    def _invoke(msgs):
+        return llm.invoke(msgs)
+
+    decision = _invoke(messages)
 
     if state.get("messages"):
         last_message = state["messages"][-1]

@@ -42,3 +42,10 @@ async def get_research_tools() -> AsyncIterator[List[BaseTool]]:
 @asynccontextmanager
 async def get_report_tools() -> AsyncIterator[List[BaseTool]]:
     yield []
+
+
+# Register providers with the tool registry
+from .registry import register_tools  # noqa: E402
+
+register_tools("research", get_research_tools)
+register_tools("report", get_report_tools)
